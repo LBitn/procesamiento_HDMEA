@@ -42,53 +42,6 @@ function checkpath( workpath::String )
     end
 end
 
-using HDF5
-function brw_things( file_brw::String ) # depende de brw file
-	brw = h5open( file_brw, "r" );
-	# channels and coords for each one
-	Chs = read( brw[ "/3BRecInfo/3BMeaStreams/RawRanges" ] )[ "Chs" ]; 
-	x = zeros( Int, size( Chs, 1 ), 3 );
-	for i = 1:size( Chs, 1 )
-	   # Channels, [number coord1 coord2]
-	   x[ i, : ] = [ i, Chs[ i ].data[ 1 ], Chs[ i ].data[ 2 ] ]; 
-	end  
-	VC = read( brw[ "/3BData/3BInfo/3BNoise/ValidChs" ] ); # Valid Channels (software desition)
-	y = zeros( Int, size( VC, 1 ), 3 );
-	for i = 1:size( VC, 1 )
-	# Valid Channels, [number coord1 coord2]
-	   y[i,:] = [ 
-	   ( ( VC[ i ].data[ 1 ] - 1)*64 + VC[ i ].data[ 2 ] ), VC[ i ].data[ 1 ], VC[ i ].data[ 2 ] 
-	   ];
-	end
-	# numero real de frames registrados
-	RawEncodedTOC = read( brw[ "/3BData/RawEncodedTOC" ] )[ 2 ]; 
-	RecVars = read( brw[ "/3BRecInfo/3BRecVars" ] );
-	SI = RecVars[ "SignalInversion" ][ ];
-	mV = RecVars[ "MinVolt" ][ ];
-	MV = RecVars[ "MaxVolt" ][ ];
-	BD = RecVars[ "BitDepth" ][ ];
-    Offset = SI*mV;
-    Factor = SI*( MV - mV )/( 2^BD );
-    NRecFrames = RecVars[ "NRecFrames" ][ ]; # numero propuesto de cuadros registrados
-    SamplingRate = RecVars[ "SamplingRate" ][ ];
-    dset = brw[ "3BData/RawEncoded" ];
-  
-	vars = Dict(
-        "Offset"        => Offset,
-        "Factor"        => Factor,
-        "NRecFrames"    => NRecFrames,
-        "SamplingRate"  => SamplingRate,
-        "Chs"   	    => x,
-		"VC" 	        => y,
-        "RawEncodedTOC" => RawEncodedTOC,
-        "dset"          => dset,
-        "MaxVolt"       => MV,
-        "MinVolt"       => mV
-        
-    );
-    return vars
-end
-
 function find_files( path_main::String, key::String, Γ::String ) # depende de OS!!!
 # buscar en el directorio Path_main, los archivos que terminen con key
     searchdir(path_main::String, key::String) = filter( x -> endswith(x, key), readdir(path_main) );
@@ -163,8 +116,58 @@ function sats(data::Array, HIthr::Int, LOthr::Int)
     println( string( " Hay ", PSP,"% de saturación." ) );
     return ChFrSat
 end
+
+function ESU( ch::Array, thr::Real, d::Int )
+    #= Se obtienen los frames y voltajes que sobrepasan el umbral establecido. Si hay eventos 
+    supraumbral a d-frames de distancia, se selecciona aquel que tenga menor voltaje.
+    =#
+    OK = findall( ch .<= thr );
+    if !isempty(OK)
+        init = 1;
+        while init == 1
+            A = OK[ 1:( end - 1 ) ]; B = OK[ 2:end ];
+            C = B .- A;
+            D = findall( C .<= d ) .+ 1;
+            if isempty( D )
+                init = 0;
+            else
+                nook = zeros( Int, size( D, 1 ) );
+                for E = 1:size( D, 1 )
+                    # si el primero es menor que el segundo, quita el segundo
+                    if isless( (ch[ OK[ D[ E ] ] ]), (ch[ OK[ D[ E ] - 1 ] ] ) ) 
+                        nook[ E ] = D[ E ] - 1;
+                    else
+                        nook[ E ] = D[ E ];
+                    end
+                end
+                if size( nook, 1 ) > 1
+                    OK[ unique( nook ) ] .= 0;
+                    filter!( x -> x != 0, OK );
+                else
+                    OK = OK[ Bool.( OK .!= OK[ nook[ 1 ] ] ) ];
+                end
+            end
+        end
+        channelC = zeros( size( OK, 1 ), 2 );
+        channelC[ :, 1 ] = OK;
+        channelC[ :, 2 ] = ch[ OK ];
+    else
+        channelC = [ ];
+    end
+    return channelC
+end
+
 # -------------------------------------------------------------------------------------------- !!!
-export div_n_ab, OS, checkpath, brw_things, find_files, neighborgs, find_dirs, divs0prime, A_minus_B, sats
+export div_n_ab
+export OS
+export checkpath 
+export find_files 
+export neighborgs 
+export find_dirs 
+export divs0prime
+export A_minus_B
+export sats
+export ESU
 
 end
                            
